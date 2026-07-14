@@ -9,8 +9,9 @@ function fmt(n) {
 
 function pnlFor(t) {
   if (t.status !== 'CLOSED' || t.exit_price === null) return null
-  const diff = t.side === 'LONG' ? (t.exit_price - t.entry_price) : (t.entry_price - t.exit_price)
-  return diff * t.amount * (t.leverage || 1)
+  const pctMove = (t.exit_price - t.entry_price) / t.entry_price
+  const directional = t.side === 'LONG' ? pctMove : -pctMove
+  return t.amount * (t.leverage || 1) * directional
 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -394,7 +395,9 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
                   const trade = trades.find(t => t.id === closeModal)
                   if (!trade) return null
                   const exitPrice = trade.entry_price * (1 + Number(closeForm.movePercent) / 100)
-                  const previewPnl = (trade.side === 'LONG' ? (exitPrice - trade.entry_price) : (trade.entry_price - exitPrice)) * trade.amount * (trade.leverage || 1)
+                  const pct = Number(closeForm.movePercent) / 100
+                  const directional = trade.side === 'LONG' ? pct : -pct
+                  const previewPnl = trade.amount * (trade.leverage || 1) * directional
                   return (
                     <p style={{ fontSize: 11, color: '#6B7280', fontFamily: 'var(--mono)', marginTop: 6 }}>
                       exit price {fmt(exitPrice)} · P&L {previewPnl >= 0 ? '+' : ''}£{fmt(previewPnl)}
