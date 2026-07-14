@@ -54,6 +54,14 @@ and deploy.
 - Everyone can see the full public Ledger, filterable by user.
 - Real login sessions persist across reloads (unlike the in-chat prototype version).
 
+## How pots work
+
+- Each trader has their own **starting pot**, set individually by the admin
+  (Admin tab → "Starting pots by user").
+- Every trader's individual **pot** = their starting pot + their own realized P&L.
+  This is visible to everyone on the Ledger tab under "Pots by user".
+- The header's **Total Pot** is the sum of everyone's individual pots.
+
 ## Notes
 
 - To promote someone to admin later, or add more admins, run in the SQL Editor:

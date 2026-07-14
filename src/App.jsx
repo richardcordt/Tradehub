@@ -21,7 +21,6 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [trades, setTrades] = useState([])
   const [profiles, setProfiles] = useState([])
-  const [settings, setSettings] = useState({ starting_pot: 0 })
   const [tab, setTab] = useState('ledger')
   const [userFilter, setUserFilter] = useState('ALL')
   const [loadError, setLoadError] = useState(null)
@@ -51,28 +50,22 @@ export default function App() {
   }, [])
 
   const loadProfiles = useCallback(async () => {
-    const { data, error } = await supabase.from('profiles').select('id, username, role')
+    const { data, error } = await supabase.from('profiles').select('id, username, role, starting_pot')
     if (!error) setProfiles(data)
-  }, [])
-
-  const loadSettings = useCallback(async () => {
-    const { data, error } = await supabase.from('settings').select('*').eq('id', 1).single()
-    if (!error && data) setSettings(data)
   }, [])
 
   useEffect(() => {
     if (!session) return
     loadTrades()
     loadProfiles()
-    loadSettings()
     // live updates so all logged-in users see changes without refreshing
     const channel = supabase
       .channel('trades-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, () => loadTrades())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, () => loadSettings())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadProfiles())
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [session, loadTrades, loadProfiles, loadSettings])
+  }, [session, loadTrades, loadProfiles])
 
   if (session === undefined) {
     return <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
@@ -88,8 +81,7 @@ export default function App() {
       profiles={profiles}
       trades={trades}
       reloadTrades={loadTrades}
-      settings={settings}
-      reloadSettings={loadSettings}
+      reloadProfiles={loadProfiles}
       tab={tab}
       setTab={setTab}
       userFilter={userFilter}
@@ -179,22 +171,39 @@ function AuthScreen() {
   )
 }
 
-function MainApp({ currentUser, profiles, trades, reloadTrades, settings, reloadSettings, tab, setTab, userFilter, setUserFilter, loadError }) {
+function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, tab, setTab, userFilter, setUserFilter, loadError }) {
   const isAdmin = currentUser.role === 'admin'
-  const [potInput, setPotInput] = useState(String(settings.starting_pot ?? 0))
-  const [potBusy, setPotBusy] = useState(false)
-  useEffect(() => { setPotInput(String(settings.starting_pot ?? 0)) }, [settings.starting_pot])
+  const [potInputs, setPotInputs] = useState({})
+  const [potBusyId, setPotBusyId] = useState(null)
 
-  async function savePot(e) {
-    e.preventDefault()
-    setPotBusy(true)
-    const { error } = await supabase.from('settings').update({ starting_pot: Number(potInput) || 0 }).eq('id', 1)
-    setPotBusy(false)
-    if (!error) reloadSettings()
+  useEffect(() => {
+    const next = {}
+    profiles.forEach(p => { next[p.id] = String(p.starting_pot ?? 0) })
+    setPotInputs(next)
+  }, [profiles])
+
+  async function savePot(profileId) {
+    setPotBusyId(profileId)
+    const { error } = await supabase.from('profiles').update({ starting_pot: Number(potInputs[profileId]) || 0 }).eq('id', profileId)
+    setPotBusyId(null)
+    if (!error) reloadProfiles()
   }
 
   const usernames = useMemo(() => profiles.map(p => p.username).sort(), [profiles])
   const filterOptions = ['ALL', ...usernames]
+
+  // realized P&L per username, and each user's individual pot (their starting pot + their own realized P&L)
+  const userPots = useMemo(() => {
+    const realizedByUser = {}
+    trades.filter(t => t.status === 'CLOSED').forEach(t => {
+      realizedByUser[t.username] = (realizedByUser[t.username] || 0) + (pnlFor(t) || 0)
+    })
+    return profiles.map(p => ({
+      ...p,
+      realized: realizedByUser[p.username] || 0,
+      pot: Number(p.starting_pot ?? 0) + (realizedByUser[p.username] || 0),
+    })).sort((a, b) => a.username.localeCompare(b.username))
+  }, [profiles, trades])
 
   const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
@@ -211,9 +220,9 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, settings, reload
     const realized = closed.reduce((sum, t) => sum + (pnlFor(t) || 0), 0)
     const wins = closed.filter(t => (pnlFor(t) || 0) > 0).length
     const winRate = closed.length ? Math.round((wins / closed.length) * 100) : null
-    const totalPot = Number(settings.starting_pot ?? 0) + realized
+    const totalPot = profiles.reduce((sum, p) => sum + Number(p.starting_pot ?? 0), 0) + realized
     return { open, closedCount: closed.length, realized, winRate, totalPot }
-  }, [trades, settings.starting_pot])
+  }, [trades, profiles])
 
   const managedTrades = isAdmin ? trades : trades.filter(t => t.username === currentUser.username)
 
@@ -300,6 +309,22 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, settings, reload
 
         {tab === 'ledger' ? (
           <div>
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <p className="panel-title">POTS BY USER</p>
+              <div className="group-list">
+                {userPots.map(p => (
+                  <div key={p.id} className="group-row">
+                    <span style={{ color: '#E8E6E1' }}>{p.username}</span>
+                    <span className="mono" style={{ fontSize: 12 }}>
+                      <span style={{ color: '#6B7280' }}>starting £{fmt(p.starting_pot)} · realized </span>
+                      <span style={{ color: p.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{p.realized >= 0 ? '+' : ''}£{fmt(p.realized)}</span>
+                      <span style={{ color: '#6B7280' }}> · </span>
+                      <span style={{ color: '#E8A33D' }}>pot £{fmt(p.pot)}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="filter-row">
               <span>USER</span>
               <select className="input" style={{ width: 'auto' }} value={userFilter} onChange={e => setUserFilter(e.target.value)}>
@@ -351,18 +376,31 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, settings, reload
         ) : (
           <div>
             {isAdmin && (
-              <form className="panel" onSubmit={savePot} style={{ marginBottom: 16 }}>
-                <p className="panel-title">STARTING POT (£)</p>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  <div className="field" style={{ flex: 1 }}>
-                    <input type="number" step="0.01" value={potInput} onChange={e => setPotInput(e.target.value)} />
-                  </div>
-                  <button className="btn-primary" type="submit" disabled={potBusy}>SAVE</button>
+              <div className="panel" style={{ marginBottom: 16 }}>
+                <p className="panel-title">STARTING POTS BY USER (£)</p>
+                <div className="group-list">
+                  {userPots.map(p => (
+                    <div key={p.id} className="group-row">
+                      <span style={{ color: '#E8E6E1' }}>{p.username}
+                        <span style={{ color: '#6B7280' }}> · realized {p.realized >= 0 ? '+' : ''}£{fmt(p.realized)} · pot £{fmt(p.pot)}</span>
+                      </span>
+                      <span className="row-actions">
+                        <input
+                          type="number" step="0.01"
+                          value={potInputs[p.id] ?? ''}
+                          onChange={e => setPotInputs({ ...potInputs, [p.id]: e.target.value })}
+                          style={{ width: 100 }}
+                          className="input"
+                        />
+                        <button type="button" className="btn-ghost-amber" disabled={potBusyId === p.id} onClick={() => savePot(p.id)}>SAVE</button>
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
-                  total pot = starting pot + realized P&L across all traders
+                <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 10, marginBottom: 0 }}>
+                  each trader's pot = their starting pot + their own realized P&L
                 </p>
-              </form>
+              </div>
             )}
             <form className="panel" onSubmit={handleAdd}>
               <p className="panel-title"><Plus size={12} /> ADD TRADE</p>
