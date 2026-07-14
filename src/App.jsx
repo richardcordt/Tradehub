@@ -175,7 +175,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
 
   const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
-  const [closeForm, setCloseForm] = useState({ exitPrice: '', exitDate: todayStr() })
+  const [closeForm, setCloseForm] = useState({ movePercent: '', exitDate: todayStr() })
   const [actionError, setActionError] = useState(null)
 
   const visibleTrades = useMemo(() => {
@@ -215,15 +215,18 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
   }
 
   function openCloseModal(id) {
-    setCloseForm({ exitPrice: '', exitDate: todayStr() })
+    setCloseForm({ movePercent: '', exitDate: todayStr() })
     setCloseModal(id)
   }
 
   async function handleCloseTrade(e) {
     e.preventDefault()
-    if (!closeForm.exitPrice) return
+    if (closeForm.movePercent === '') return
+    const trade = trades.find(t => t.id === closeModal)
+    if (!trade) return
+    const exitPrice = trade.entry_price * (1 + Number(closeForm.movePercent) / 100)
     const { error } = await supabase.from('trades')
-      .update({ status: 'CLOSED', exit_price: Number(closeForm.exitPrice), exit_date: closeForm.exitDate })
+      .update({ status: 'CLOSED', exit_price: exitPrice, exit_date: closeForm.exitDate })
       .eq('id', closeModal)
     if (error) setActionError(error.message)
     else { setActionError(null); setCloseModal(null); reloadTrades() }
@@ -384,8 +387,21 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
               <button type="button" className="icon-btn" onClick={() => setCloseModal(null)}><X size={14} color="#6B7280" /></button>
             </div>
             <div className="field" style={{ marginBottom: 12 }}>
-              <label>EXIT PRICE</label>
-              <input autoFocus type="number" step="any" value={closeForm.exitPrice} onChange={e => setCloseForm({ ...closeForm, exitPrice: e.target.value })} />
+              <label>PRICE MOVE (%)</label>
+              <input autoFocus type="number" step="any" placeholder="e.g. 5 or -3.5" value={closeForm.movePercent} onChange={e => setCloseForm({ ...closeForm, movePercent: e.target.value })} />
+              {closeForm.movePercent !== '' && !isNaN(closeForm.movePercent) && closeModal && (
+                (() => {
+                  const trade = trades.find(t => t.id === closeModal)
+                  if (!trade) return null
+                  const exitPrice = trade.entry_price * (1 + Number(closeForm.movePercent) / 100)
+                  const previewPnl = (trade.side === 'LONG' ? (exitPrice - trade.entry_price) : (trade.entry_price - exitPrice)) * trade.amount * (trade.leverage || 1)
+                  return (
+                    <p style={{ fontSize: 11, color: '#6B7280', fontFamily: 'var(--mono)', marginTop: 6 }}>
+                      exit price {fmt(exitPrice)} · P&L {previewPnl >= 0 ? '+' : ''}£{fmt(previewPnl)}
+                    </p>
+                  )
+                })()
+              )}
             </div>
             <div className="field" style={{ marginBottom: 16 }}>
               <label>EXIT DATE</label>
