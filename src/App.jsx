@@ -21,6 +21,7 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [trades, setTrades] = useState([])
   const [profiles, setProfiles] = useState([])
+  const [settings, setSettings] = useState({ starting_pot: 0 })
   const [tab, setTab] = useState('ledger')
   const [userFilter, setUserFilter] = useState('ALL')
   const [loadError, setLoadError] = useState(null)
@@ -54,17 +55,24 @@ export default function App() {
     if (!error) setProfiles(data)
   }, [])
 
+  const loadSettings = useCallback(async () => {
+    const { data, error } = await supabase.from('settings').select('*').eq('id', 1).single()
+    if (!error && data) setSettings(data)
+  }, [])
+
   useEffect(() => {
     if (!session) return
     loadTrades()
     loadProfiles()
+    loadSettings()
     // live updates so all logged-in users see changes without refreshing
     const channel = supabase
       .channel('trades-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, () => loadTrades())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, () => loadSettings())
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [session, loadTrades, loadProfiles])
+  }, [session, loadTrades, loadProfiles, loadSettings])
 
   if (session === undefined) {
     return <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
@@ -80,6 +88,8 @@ export default function App() {
       profiles={profiles}
       trades={trades}
       reloadTrades={loadTrades}
+      settings={settings}
+      reloadSettings={loadSettings}
       tab={tab}
       setTab={setTab}
       userFilter={userFilter}
@@ -169,8 +179,20 @@ function AuthScreen() {
   )
 }
 
-function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, userFilter, setUserFilter, loadError }) {
+function MainApp({ currentUser, profiles, trades, reloadTrades, settings, reloadSettings, tab, setTab, userFilter, setUserFilter, loadError }) {
   const isAdmin = currentUser.role === 'admin'
+  const [potInput, setPotInput] = useState(String(settings.starting_pot ?? 0))
+  const [potBusy, setPotBusy] = useState(false)
+  useEffect(() => { setPotInput(String(settings.starting_pot ?? 0)) }, [settings.starting_pot])
+
+  async function savePot(e) {
+    e.preventDefault()
+    setPotBusy(true)
+    const { error } = await supabase.from('settings').update({ starting_pot: Number(potInput) || 0 }).eq('id', 1)
+    setPotBusy(false)
+    if (!error) reloadSettings()
+  }
+
   const usernames = useMemo(() => profiles.map(p => p.username).sort(), [profiles])
   const filterOptions = ['ALL', ...usernames]
 
@@ -189,8 +211,9 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
     const realized = closed.reduce((sum, t) => sum + (pnlFor(t) || 0), 0)
     const wins = closed.filter(t => (pnlFor(t) || 0) > 0).length
     const winRate = closed.length ? Math.round((wins / closed.length) * 100) : null
-    return { open, closedCount: closed.length, realized, winRate }
-  }, [trades])
+    const totalPot = Number(settings.starting_pot ?? 0) + realized
+    return { open, closedCount: closed.length, realized, winRate, totalPot }
+  }, [trades, settings.starting_pot])
 
   const managedTrades = isAdmin ? trades : trades.filter(t => t.username === currentUser.username)
 
@@ -253,6 +276,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <div className="stats-row">
+              <div><div className="stat-label">TOTAL POT</div><div className="stat-value" style={{ color: '#E8A33D', fontSize: 16 }}>£{fmt(stats.totalPot)}</div></div>
               <div><div className="stat-label">OPEN</div><div className="stat-value" style={{ color: '#3DDC84' }}>{stats.open}</div></div>
               <div><div className="stat-label">CLOSED</div><div className="stat-value">{stats.closedCount}</div></div>
               <div><div className="stat-label">REALIZED P&L</div><div className="stat-value" style={{ color: stats.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{stats.realized >= 0 ? '+' : ''}{fmt(stats.realized)}</div></div>
@@ -326,6 +350,20 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
           </div>
         ) : (
           <div>
+            {isAdmin && (
+              <form className="panel" onSubmit={savePot} style={{ marginBottom: 16 }}>
+                <p className="panel-title">STARTING POT (£)</p>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                  <div className="field" style={{ flex: 1 }}>
+                    <input type="number" step="0.01" value={potInput} onChange={e => setPotInput(e.target.value)} />
+                  </div>
+                  <button className="btn-primary" type="submit" disabled={potBusy}>SAVE</button>
+                </div>
+                <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
+                  total pot = starting pot + realized P&L across all traders
+                </p>
+              </form>
+            )}
             <form className="panel" onSubmit={handleAdd}>
               <p className="panel-title"><Plus size={12} /> ADD TRADE</p>
               <div className="form-grid">

@@ -25,7 +25,16 @@ create table public.trades (
   created_at timestamptz default now()
 );
 
--- 3. Auto-create a profile row whenever someone signs up.
+-- 3. Settings: a single row holding the admin-settable starting pot
+create table public.settings (
+  id int primary key default 1,
+  starting_pot numeric not null default 0,
+  updated_at timestamptz default now(),
+  constraint single_row check (id = 1)
+);
+insert into public.settings (id, starting_pot) values (1, 0);
+
+-- 4. Auto-create a profile row whenever someone signs up.
 --    The very first person to ever sign up becomes admin automatically;
 --    everyone after that is a regular trader.
 create or replace function public.handle_new_user()
@@ -48,9 +57,10 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
--- 4. Row Level Security
+-- 5. Row Level Security
 alter table public.profiles enable row level security;
 alter table public.trades enable row level security;
+alter table public.settings enable row level security;
 
 -- Anyone logged in can see all profiles (needed for the admin "assign user" dropdown
 -- and to show usernames on the ledger) and all trades (the public ledger view).
@@ -85,3 +95,11 @@ create policy "delete own trades or admin any"
     auth.uid() = user_id
     or exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
   );
+
+create policy "settings readable by logged in users"
+  on public.settings for select
+  using (auth.role() = 'authenticated');
+
+create policy "settings updatable by admin only"
+  on public.settings for update
+  using (exists (select 1 from public.profiles where id = auth.uid() and role = 'admin'));
