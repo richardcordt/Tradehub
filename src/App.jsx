@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Lock, X, Trash2, ArrowUpCircle, ArrowDownCircle, LogOut, UserPlus, KeyRound } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase, supabaseCreateUserClient } from './supabaseClient'
 
 function fmt(n) {
@@ -174,6 +175,7 @@ function AuthScreen() {
 
 function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, tab, setTab, userFilter, setUserFilter, loadError }) {
   const isAdmin = currentUser.role === 'admin'
+  useEffect(() => { if (!isAdmin && tab === 'mine') setTab('ledger') }, [isAdmin, tab, setTab])
   const [potInputs, setPotInputs] = useState({})
   const [potBusyId, setPotBusyId] = useState(null)
 
@@ -229,6 +231,21 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
       pot: Number(p.starting_pot ?? 0) + (realizedByUser[p.username] || 0),
     })).sort((a, b) => a.username.localeCompare(b.username))
   }, [profiles, trades])
+
+  // cumulative pot value over time for the logged-in user, plotted as a line chart
+  const potHistory = useMemo(() => {
+    const starting = Number(currentUser.starting_pot ?? 0)
+    const own = trades
+      .filter(t => t.username === currentUser.username && t.status === 'CLOSED' && t.exit_date)
+      .sort((a, b) => (a.exit_date || '').localeCompare(b.exit_date || ''))
+    let running = starting
+    const points = [{ date: 'start', pot: running }]
+    own.forEach(t => {
+      running += pnlFor(t) || 0
+      points.push({ date: t.exit_date, pot: running })
+    })
+    return points
+  }, [trades, currentUser])
 
   const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
@@ -323,9 +340,11 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
 
       <div className="tabs">
         <button className={`tab-btn ${tab === 'ledger' ? 'active' : ''}`} onClick={() => setTab('ledger')}>LEDGER</button>
-        <button className={`tab-btn ${tab === 'mine' ? 'active' : ''}`} onClick={() => setTab('mine')}>
-          <Lock size={12} /> {isAdmin ? 'ADMIN' : 'MY TRADES'}
-        </button>
+        {isAdmin && (
+          <button className={`tab-btn ${tab === 'mine' ? 'active' : ''}`} onClick={() => setTab('mine')}>
+            <Lock size={12} /> ADMIN
+          </button>
+        )}
       </div>
 
       <div className="content">
@@ -349,6 +368,29 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   </div>
                 ))}
               </div>
+            </div>
+
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <p className="panel-title">YOUR POT OVER TIME</p>
+              {potHistory.length < 2 ? (
+                <p className="empty" style={{ padding: '20px 0' }}>close a trade to start plotting your pot over time</p>
+              ) : (
+                <div style={{ width: '100%', height: 220 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={potHistory} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                      <CartesianGrid stroke="#1B2027" strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fill: '#6B7280', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }} axisLine={{ stroke: '#2A2F36' }} tickLine={false} />
+                      <YAxis tick={{ fill: '#6B7280', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }} axisLine={{ stroke: '#2A2F36' }} tickLine={false} width={60} tickFormatter={v => `$${fmt(v)}`} />
+                      <Tooltip
+                        contentStyle={{ background: '#0E1216', border: '1px solid #2A2F36', borderRadius: 3, fontFamily: 'IBM Plex Mono, monospace', fontSize: 12 }}
+                        labelStyle={{ color: '#6B7280' }}
+                        formatter={(value) => [`$${fmt(value)}`, 'pot']}
+                      />
+                      <Line type="monotone" dataKey="pot" stroke="#E8A33D" strokeWidth={2} dot={{ r: 3, fill: '#E8A33D' }} activeDot={{ r: 5 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
             {isAdmin ? (
               <div className="filter-row">
