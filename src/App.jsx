@@ -10,8 +10,9 @@ function fmt(n) {
 function pnlFor(t) {
   if (t.status !== 'CLOSED' || t.exit_price === null) return null
   const pctMove = (t.exit_price - t.entry_price) / t.entry_price
-  const directional = t.side === 'LONG' ? pctMove : -pctMove
-  return t.amount * (t.leverage || 1) * directional
+  // the entered close % directly represents the trade's result: negative = loss, positive = profit,
+  // regardless of side (side is just a record of the position direction, not part of the P&L sign).
+  return t.amount * (t.leverage || 1) * pctMove
 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -464,19 +465,17 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
               <button type="button" className="icon-btn" onClick={() => setCloseModal(null)}><X size={14} color="#6B7280" /></button>
             </div>
             <div className="field" style={{ marginBottom: 12 }}>
-              <label>PRICE MOVE (%)</label>
-              <input autoFocus type="number" step="any" placeholder="e.g. 5 or -3.5" value={closeForm.movePercent} onChange={e => setCloseForm({ ...closeForm, movePercent: e.target.value })} />
+              <label>RESULT (%)</label>
+              <input autoFocus type="number" step="any" placeholder="e.g. 5 for a profit, -3.5 for a loss" value={closeForm.movePercent} onChange={e => setCloseForm({ ...closeForm, movePercent: e.target.value })} />
               {closeForm.movePercent !== '' && !isNaN(closeForm.movePercent) && closeModal && (
                 (() => {
                   const trade = trades.find(t => t.id === closeModal)
                   if (!trade) return null
-                  const exitPrice = trade.entry_price * (1 + Number(closeForm.movePercent) / 100)
                   const pct = Number(closeForm.movePercent) / 100
-                  const directional = trade.side === 'LONG' ? pct : -pct
-                  const previewPnl = trade.amount * (trade.leverage || 1) * directional
+                  const previewPnl = trade.amount * (trade.leverage || 1) * pct
                   return (
-                    <p style={{ fontSize: 11, color: '#6B7280', fontFamily: 'var(--mono)', marginTop: 6 }}>
-                      exit price {fmt(exitPrice)} · P&L {previewPnl >= 0 ? '+' : ''}£{fmt(previewPnl)}
+                    <p style={{ fontSize: 11, color: previewPnl >= 0 ? '#3DDC84' : '#E8574A', fontFamily: 'var(--mono)', marginTop: 6 }}>
+                      P&L {previewPnl >= 0 ? '+' : ''}£{fmt(previewPnl)}
                     </p>
                   )
                 })()
