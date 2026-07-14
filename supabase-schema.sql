@@ -17,7 +17,7 @@ create table public.trades (
   user_id uuid references public.profiles(id) on delete cascade not null,
   username text not null,
   side text not null check (side in ('LONG','SHORT')),
-  amount numeric not null,        -- stake in GBP
+  amount numeric not null,        -- stake in USD
   leverage numeric not null default 1,
   entry_price numeric not null,
   entry_date date not null,

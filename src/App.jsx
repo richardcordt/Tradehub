@@ -310,7 +310,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <div className="stats-row">
-              <div><div className="stat-label">TOTAL POT</div><div className="stat-value" style={{ color: '#E8A33D', fontSize: 16 }}>£{fmt(stats.totalPot)}</div></div>
+              <div><div className="stat-label">TOTAL POT</div><div className="stat-value" style={{ color: '#E8A33D', fontSize: 16 }}>${fmt(stats.totalPot)}</div></div>
               <div><div className="stat-label">OPEN</div><div className="stat-value" style={{ color: '#3DDC84' }}>{stats.open}</div></div>
               <div><div className="stat-label">CLOSED</div><div className="stat-value">{stats.closedCount}</div></div>
               <div><div className="stat-label">REALIZED P&L</div><div className="stat-value" style={{ color: stats.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{stats.realized >= 0 ? '+' : ''}{fmt(stats.realized)}</div></div>
@@ -341,10 +341,10 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   <div key={p.id} className="group-row">
                     <span style={{ color: '#E8E6E1' }}>{p.username}</span>
                     <span className="mono" style={{ fontSize: 12 }}>
-                      <span style={{ color: '#6B7280' }}>starting £{fmt(p.starting_pot)} · realized </span>
-                      <span style={{ color: p.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{p.realized >= 0 ? '+' : ''}£{fmt(p.realized)}</span>
+                      <span style={{ color: '#6B7280' }}>starting ${fmt(p.starting_pot)} · realized </span>
+                      <span style={{ color: p.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{p.realized >= 0 ? '+' : ''}${fmt(p.realized)}</span>
                       <span style={{ color: '#6B7280' }}> · </span>
-                      <span style={{ color: '#E8A33D' }}>pot £{fmt(p.pot)}</span>
+                      <span style={{ color: '#E8A33D' }}>pot ${fmt(p.pot)}</span>
                     </span>
                   </div>
                 ))}
@@ -364,7 +364,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   <thead>
                     <tr>
                       <th>USER</th><th>SIDE</th>
-                      <th className="right">AMOUNT (£)</th><th className="right">LEV</th><th className="right">ENTRY</th><th className="right">EXIT</th>
+                      <th className="right">AMOUNT ($)</th><th className="right">LEV</th><th className="right">ENTRY</th><th className="right">EXIT</th>
                       <th>STATUS</th><th className="right">P&L</th>
                     </tr>
                   </thead>
@@ -379,7 +379,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                               {t.side === 'LONG' ? <ArrowUpCircle size={11} /> : <ArrowDownCircle size={11} />}{t.side}
                             </span>
                           </td>
-                          <td className="right">£{fmt(t.amount)}</td>
+                          <td className="right">${fmt(t.amount)}</td>
                           <td className="right">{t.leverage}×</td>
                           <td className="right">{fmt(t.entry_price)}</td>
                           <td className="right">{t.exit_price !== null ? fmt(t.exit_price) : '—'}</td>
@@ -388,7 +388,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                             <span style={{ color: t.status === 'OPEN' ? '#3DDC84' : '#6B7280' }}>{t.status}</span>
                           </td>
                           <td className="right" style={{ color: pnl === null ? '#4B5158' : pnl >= 0 ? '#3DDC84' : '#E8574A' }}>
-                            {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}${fmt(pnl)}`}
+                            {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${fmt(pnl)}`}
                           </td>
                         </tr>
                       )
@@ -427,12 +427,12 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
             )}
             {isAdmin && (
               <div className="panel" style={{ marginBottom: 16 }}>
-                <p className="panel-title">STARTING POTS BY USER (£)</p>
+                <p className="panel-title">STARTING POTS BY USER ($)</p>
                 <div className="group-list">
                   {userPots.map(p => (
                     <div key={p.id} className="group-row">
                       <span style={{ color: '#E8E6E1' }}>{p.username}
-                        <span style={{ color: '#6B7280' }}> · realized {p.realized >= 0 ? '+' : ''}£{fmt(p.realized)} · pot £{fmt(p.pot)}</span>
+                        <span style={{ color: '#6B7280' }}> · realized {p.realized >= 0 ? '+' : ''}${fmt(p.realized)} · pot ${fmt(p.pot)}</span>
                       </span>
                       <span className="row-actions">
                         <input
@@ -477,7 +477,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   </select>
                 </div>
                 <div className="field">
-                  <label>AMOUNT (£)</label>
+                  <label>AMOUNT ($)</label>
                   <input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
                 </div>
                 <div className="field">
@@ -524,7 +524,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   const previewPnl = trade.amount * (trade.leverage || 1) * pct
                   return (
                     <p style={{ fontSize: 11, color: previewPnl >= 0 ? '#3DDC84' : '#E8574A', fontFamily: 'var(--mono)', marginTop: 6 }}>
-                      P&L {previewPnl >= 0 ? '+' : ''}£{fmt(previewPnl)}
+                      P&L {previewPnl >= 0 ? '+' : ''}${fmt(previewPnl)}
                     </p>
                   )
                 })()
@@ -557,8 +557,8 @@ function TradeGroup({ title, trades, onClose, onReopen, onDelete, closed }) {
                 <span>
                   <span className={`status-dot ${t.status === 'OPEN' ? 'open' : 'closed'}`}></span>
                   <span style={{ color: '#E8E6E1' }}>{t.username}</span>
-                  <span style={{ color: '#6B7280' }}> · {t.side} · £{fmt(t.amount)} · {t.leverage}× @ {fmt(t.entry_price)}{closed ? ` → ${fmt(t.exit_price)}` : ''}</span>
-                  {closed && <span style={{ color: pnl >= 0 ? '#3DDC84' : '#E8574A' }}> · {pnl >= 0 ? '+' : ''}{fmt(pnl)}</span>}
+                  <span style={{ color: '#6B7280' }}> · {t.side} · ${fmt(t.amount)} · {t.leverage}× @ {fmt(t.entry_price)}{closed ? ` → ${fmt(t.exit_price)}` : ''}</span>
+                  {closed && <span style={{ color: pnl >= 0 ? '#3DDC84' : '#E8574A' }}> · {pnl >= 0 ? '+' : ''}${fmt(pnl)}</span>}
                 </span>
                 <span className="row-actions">
                   {closed ? (
