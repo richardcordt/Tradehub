@@ -10,7 +10,7 @@ function fmt(n) {
 function pnlFor(t) {
   if (t.status !== 'CLOSED' || t.exit_price === null) return null
   const diff = t.side === 'LONG' ? (t.exit_price - t.entry_price) : (t.entry_price - t.exit_price)
-  return diff * t.qty
+  return diff * t.amount * (t.leverage || 1)
 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -173,7 +173,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
   const usernames = useMemo(() => profiles.map(p => p.username).sort(), [profiles])
   const filterOptions = ['ALL', ...usernames]
 
-  const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, symbol: '', side: 'LONG', qty: '', entryPrice: '', entryDate: todayStr(), notes: '' })
+  const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
   const [closeForm, setCloseForm] = useState({ exitPrice: '', exitDate: todayStr() })
   const [actionError, setActionError] = useState(null)
@@ -196,22 +196,22 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
   async function handleAdd(e) {
     e.preventDefault()
     const ownerUsername = isAdmin ? form.user : currentUser.username
-    if (!ownerUsername || !form.symbol.trim() || !form.qty || !form.entryPrice) return
+    if (!ownerUsername || !form.amount || !form.entryPrice) return
     const ownerProfile = profiles.find(p => p.username === ownerUsername)
     if (!ownerProfile) { setActionError('Could not find that user.'); return }
     const { error } = await supabase.from('trades').insert({
       user_id: ownerProfile.id,
       username: ownerUsername,
-      symbol: form.symbol.trim().toUpperCase(),
       side: form.side,
-      qty: Number(form.qty),
+      amount: Number(form.amount),
+      leverage: Number(form.leverage) || 1,
       entry_price: Number(form.entryPrice),
       entry_date: form.entryDate,
       notes: form.notes.trim(),
       status: 'OPEN',
     })
     if (error) setActionError(error.message)
-    else { setActionError(null); setForm({ ...form, symbol: '', qty: '', entryPrice: '', notes: '' }); reloadTrades() }
+    else { setActionError(null); setForm({ ...form, amount: '', leverage: '1', entryPrice: '', notes: '' }); reloadTrades() }
   }
 
   function openCloseModal(id) {
@@ -285,8 +285,8 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
                 <table>
                   <thead>
                     <tr>
-                      <th>USER</th><th>SYMBOL</th><th>SIDE</th>
-                      <th className="right">QTY</th><th className="right">ENTRY</th><th className="right">EXIT</th>
+                      <th>USER</th><th>SIDE</th>
+                      <th className="right">AMOUNT (£)</th><th className="right">LEV</th><th className="right">ENTRY</th><th className="right">EXIT</th>
                       <th>STATUS</th><th className="right">P&L</th>
                     </tr>
                   </thead>
@@ -296,13 +296,13 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
                       return (
                         <tr key={t.id}>
                           <td>{t.username}</td>
-                          <td>{t.symbol}</td>
                           <td>
                             <span className={`side ${t.side === 'LONG' ? 'long' : 'short'}`}>
                               {t.side === 'LONG' ? <ArrowUpCircle size={11} /> : <ArrowDownCircle size={11} />}{t.side}
                             </span>
                           </td>
-                          <td className="right">{t.qty}</td>
+                          <td className="right">£{fmt(t.amount)}</td>
+                          <td className="right">{t.leverage}×</td>
                           <td className="right">{fmt(t.entry_price)}</td>
                           <td className="right">{t.exit_price !== null ? fmt(t.exit_price) : '—'}</td>
                           <td>
@@ -340,10 +340,6 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
                   </div>
                 )}
                 <div className="field">
-                  <label>SYMBOL</label>
-                  <input value={form.symbol} onChange={e => setForm({ ...form, symbol: e.target.value })} />
-                </div>
-                <div className="field">
                   <label>SIDE</label>
                   <select value={form.side} onChange={e => setForm({ ...form, side: e.target.value })}>
                     <option value="LONG">LONG</option>
@@ -351,8 +347,12 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, tab, setTab, use
                   </select>
                 </div>
                 <div className="field">
-                  <label>QUANTITY</label>
-                  <input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} />
+                  <label>AMOUNT (£)</label>
+                  <input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>LEVERAGE</label>
+                  <input type="number" step="0.1" min="1" value={form.leverage} onChange={e => setForm({ ...form, leverage: e.target.value })} />
                 </div>
                 <div className="field">
                   <label>ENTRY PRICE</label>
@@ -414,7 +414,7 @@ function TradeGroup({ title, trades, onClose, onReopen, onDelete, closed }) {
                 <span>
                   <span className={`status-dot ${t.status === 'OPEN' ? 'open' : 'closed'}`}></span>
                   <span style={{ color: '#E8E6E1' }}>{t.username}</span>
-                  <span style={{ color: '#6B7280' }}> · {t.symbol} · {t.side} · qty {t.qty} @ {fmt(t.entry_price)}{closed ? ` → ${fmt(t.exit_price)}` : ''}</span>
+                  <span style={{ color: '#6B7280' }}> · {t.side} · £{fmt(t.amount)} · {t.leverage}× @ {fmt(t.entry_price)}{closed ? ` → ${fmt(t.exit_price)}` : ''}</span>
                   {closed && <span style={{ color: pnl >= 0 ? '#3DDC84' : '#E8574A' }}> · {pnl >= 0 ? '+' : ''}{fmt(pnl)}</span>}
                 </span>
                 <span className="row-actions">

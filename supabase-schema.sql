@@ -13,9 +13,9 @@ create table public.trades (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.profiles(id) on delete cascade not null,
   username text not null,
-  symbol text not null,
   side text not null check (side in ('LONG','SHORT')),
-  qty numeric not null,
+  amount numeric not null,        -- stake in GBP
+  leverage numeric not null default 1,
   entry_price numeric not null,
   entry_date date not null,
   notes text,
