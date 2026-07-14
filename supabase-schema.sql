@@ -66,20 +66,21 @@ $$;
 alter table public.profiles enable row level security;
 alter table public.trades enable row level security;
 
--- Anyone logged in can see all profiles (needed for the admin "assign user" dropdown,
--- per-user pots, and to show usernames on the ledger) and all trades (public ledger view).
-create policy "profiles readable by logged in users"
+-- Everyone logged in can see their own profile; admins can see everyone's
+-- (needed for the admin "assign user" dropdown, per-user pots, and usernames on trades).
+create policy "profiles readable own or admin"
   on public.profiles for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = id or public.is_admin());
 
 -- Only admins can edit a profile (used to set each user's starting pot).
 create policy "profiles updatable by admin"
   on public.profiles for update
   using (public.is_admin());
 
-create policy "trades readable by logged in users"
+-- A trader can see their own trades; an admin can see everyone's.
+create policy "trades readable own or admin"
   on public.trades for select
-  using (auth.role() = 'authenticated');
+  using (auth.uid() = user_id or public.is_admin());
 
 -- Insert: a trader can log a trade for themselves; an admin can log for anyone.
 create policy "insert own trades or admin any"

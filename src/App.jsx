@@ -310,7 +310,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <div className="stats-row">
-              <div><div className="stat-label">TOTAL POT</div><div className="stat-value" style={{ color: '#E8A33D', fontSize: 16 }}>${fmt(stats.totalPot)}</div></div>
+              <div><div className="stat-label">{isAdmin ? 'TOTAL POT' : 'YOUR POT'}</div><div className="stat-value" style={{ color: '#E8A33D', fontSize: 16 }}>${fmt(stats.totalPot)}</div></div>
               <div><div className="stat-label">OPEN</div><div className="stat-value" style={{ color: '#3DDC84' }}>{stats.open}</div></div>
               <div><div className="stat-label">CLOSED</div><div className="stat-value">{stats.closedCount}</div></div>
               <div><div className="stat-label">REALIZED P&L</div><div className="stat-value" style={{ color: stats.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{stats.realized >= 0 ? '+' : ''}{fmt(stats.realized)}</div></div>
@@ -335,7 +335,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
         {tab === 'ledger' ? (
           <div>
             <div className="panel" style={{ marginBottom: 16 }}>
-              <p className="panel-title">POTS BY USER</p>
+              <p className="panel-title">{isAdmin ? 'POTS BY USER' : 'YOUR POT'}</p>
               <div className="group-list">
                 {userPots.map(p => (
                   <div key={p.id} className="group-row">
@@ -350,12 +350,16 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                 ))}
               </div>
             </div>
-            <div className="filter-row">
-              <span>USER</span>
-              <select className="input" style={{ width: 'auto' }} value={userFilter} onChange={e => setUserFilter(e.target.value)}>
-                {filterOptions.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
+            {isAdmin ? (
+              <div className="filter-row">
+                <span>USER</span>
+                <select className="input" style={{ width: 'auto' }} value={userFilter} onChange={e => setUserFilter(e.target.value)}>
+                  {filterOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            ) : (
+              <p className="group-title" style={{ marginBottom: 8 }}>YOUR TRADES</p>
+            )}
             {visibleTrades.length === 0 ? (
               <div className="empty">no trades logged yet</div>
             ) : (
