@@ -8,3 +8,10 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+// A second, isolated client used only when an admin creates a new user account.
+// persistSession/autoRefreshToken are off so this never touches or overwrites
+// the admin's own logged-in session in the browser.
+export const supabaseCreateUserClient = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+})

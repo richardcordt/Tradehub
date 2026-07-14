@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Lock, X, Trash2, ArrowUpCircle, ArrowDownCircle, LogOut, UserPlus, KeyRound } from 'lucide-react'
-import { supabase } from './supabaseClient'
+import { supabase, supabaseCreateUserClient } from './supabaseClient'
 
 function fmt(n) {
   if (n === '' || n === null || n === undefined || isNaN(n)) return '—'
@@ -190,6 +190,30 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     if (!error) reloadProfiles()
   }
 
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '' })
+  const [newUserBusy, setNewUserBusy] = useState(false)
+  const [newUserError, setNewUserError] = useState('')
+  const [newUserSuccess, setNewUserSuccess] = useState('')
+
+  async function handleAddUser(e) {
+    e.preventDefault()
+    setNewUserError(''); setNewUserSuccess('')
+    if (newUser.username.trim().length < 2) { setNewUserError('username too short'); return }
+    if (newUser.password.length < 6) { setNewUserError('password must be at least 6 characters'); return }
+    setNewUserBusy(true)
+    // uses the isolated client so this doesn't swap out the admin's own session
+    const { error } = await supabaseCreateUserClient.auth.signUp({
+      email: newUser.email.trim(),
+      password: newUser.password,
+      options: { data: { username: newUser.username.trim() } },
+    })
+    setNewUserBusy(false)
+    if (error) { setNewUserError(error.message); return }
+    setNewUserSuccess(`Account created for ${newUser.username.trim()}. Share the email + password with them directly.`)
+    setNewUser({ username: '', email: '', password: '' })
+    reloadProfiles()
+  }
+
   const usernames = useMemo(() => profiles.map(p => p.username).sort(), [profiles])
   const filterOptions = ['ALL', ...usernames]
 
@@ -376,6 +400,31 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
           </div>
         ) : (
           <div>
+            {isAdmin && (
+              <form className="panel" onSubmit={handleAddUser} style={{ marginBottom: 16 }}>
+                <p className="panel-title"><UserPlus size={12} /> ADD USER</p>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>USERNAME</label>
+                    <input value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>EMAIL</label>
+                    <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>PASSWORD</label>
+                    <input type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} />
+                  </div>
+                </div>
+                {newUserError && <p className="error-text" style={{ marginTop: 8 }}>{newUserError}</p>}
+                {newUserSuccess && <p className="error-text" style={{ marginTop: 8, color: '#3DDC84' }}>{newUserSuccess}</p>}
+                <button className="btn-primary" style={{ marginTop: 12 }} type="submit" disabled={newUserBusy}>CREATE ACCOUNT</button>
+                <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
+                  creates the account instantly, no email verification needed — give the new trader their email and password to log in
+                </p>
+              </form>
+            )}
             {isAdmin && (
               <div className="panel" style={{ marginBottom: 16 }}>
                 <p className="panel-title">STARTING POTS BY USER (£)</p>
