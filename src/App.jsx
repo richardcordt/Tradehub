@@ -23,6 +23,7 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   const [trades, setTrades] = useState([])
   const [profiles, setProfiles] = useState([])
+  const [withdrawals, setWithdrawals] = useState([])
   const [tab, setTab] = useState('ledger')
   const [userFilter, setUserFilter] = useState('ALL')
   const [loadError, setLoadError] = useState(null)
@@ -56,18 +57,25 @@ export default function App() {
     if (!error) setProfiles(data)
   }, [])
 
+  const loadWithdrawals = useCallback(async () => {
+    const { data, error } = await supabase.from('withdrawals').select('*').order('withdrawal_date', { ascending: false })
+    if (!error) setWithdrawals(data)
+  }, [])
+
   useEffect(() => {
     if (!session) return
     loadTrades()
     loadProfiles()
+    loadWithdrawals()
     // live updates so all logged-in users see changes without refreshing
     const channel = supabase
       .channel('trades-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, () => loadTrades())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadProfiles())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'withdrawals' }, () => loadWithdrawals())
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [session, loadTrades, loadProfiles])
+  }, [session, loadTrades, loadProfiles, loadWithdrawals])
 
   if (session === undefined) {
     return <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
@@ -84,6 +92,8 @@ export default function App() {
       trades={trades}
       reloadTrades={loadTrades}
       reloadProfiles={loadProfiles}
+      withdrawals={withdrawals}
+      reloadWithdrawals={loadWithdrawals}
       tab={tab}
       setTab={setTab}
       userFilter={userFilter}
@@ -173,7 +183,7 @@ function AuthScreen() {
   )
 }
 
-function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, tab, setTab, userFilter, setUserFilter, loadError }) {
+function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, withdrawals, reloadWithdrawals, tab, setTab, userFilter, setUserFilter, loadError }) {
   const isAdmin = currentUser.role === 'admin'
   useEffect(() => { if (!isAdmin && tab === 'mine') setTab('ledger') }, [isAdmin, tab, setTab])
   const [potInputs, setPotInputs] = useState({})
@@ -225,32 +235,73 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     trades.filter(t => t.status === 'CLOSED').forEach(t => {
       realizedByUser[t.username] = (realizedByUser[t.username] || 0) + (pnlFor(t) || 0)
     })
-    return profiles.map(p => ({
-      ...p,
-      realized: realizedByUser[p.username] || 0,
-      pot: Number(p.starting_pot ?? 0) + (realizedByUser[p.username] || 0),
-    })).sort((a, b) => a.username.localeCompare(b.username))
-  }, [profiles, trades])
+    const withdrawnByUser = {}
+    withdrawals.forEach(w => {
+      withdrawnByUser[w.username] = (withdrawnByUser[w.username] || 0) + Number(w.amount)
+    })
+    return profiles.map(p => {
+      const realized = realizedByUser[p.username] || 0
+      const withdrawn = withdrawnByUser[p.username] || 0
+      return {
+        ...p,
+        realized,
+        withdrawn,
+        pot: Number(p.starting_pot ?? 0) + realized - withdrawn,
+      }
+    }).sort((a, b) => a.username.localeCompare(b.username))
+  }, [profiles, trades, withdrawals])
 
-  // cumulative pot value over time for the logged-in user, plotted as a line chart
+  // cumulative pot value over time for the logged-in user, plotted as a line chart.
+  // merges closed trades (add P&L) and withdrawals (subtract) in chronological order.
   const potHistory = useMemo(() => {
     const starting = Number(currentUser.starting_pot ?? 0)
-    const own = trades
-      .filter(t => t.username === currentUser.username && t.status === 'CLOSED' && t.exit_date)
-      .sort((a, b) => (a.exit_date || '').localeCompare(b.exit_date || ''))
+    const events = [
+      ...trades
+        .filter(t => t.username === currentUser.username && t.status === 'CLOSED' && t.exit_date)
+        .map(t => ({ date: t.exit_date, delta: pnlFor(t) || 0 })),
+      ...withdrawals
+        .filter(w => w.username === currentUser.username)
+        .map(w => ({ date: w.withdrawal_date, delta: -Number(w.amount) })),
+    ].sort((a, b) => (a.date || '').localeCompare(b.date || ''))
     let running = starting
     const points = [{ date: 'start', pot: running }]
-    own.forEach(t => {
-      running += pnlFor(t) || 0
-      points.push({ date: t.exit_date, pot: running })
+    events.forEach(e => {
+      running += e.delta
+      points.push({ date: e.date, pot: running })
     })
     return points
-  }, [trades, currentUser])
+  }, [trades, withdrawals, currentUser])
 
   const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
   const [closeForm, setCloseForm] = useState({ movePercent: '', exitDate: todayStr() })
   const [actionError, setActionError] = useState(null)
+
+  const [withdrawForm, setWithdrawForm] = useState({ user: '', amount: '', date: todayStr(), notes: '' })
+  const [withdrawBusy, setWithdrawBusy] = useState(false)
+
+  async function handleWithdraw(e) {
+    e.preventDefault()
+    if (!withdrawForm.user || !withdrawForm.amount) return
+    const ownerProfile = profiles.find(p => p.username === withdrawForm.user)
+    if (!ownerProfile) { setActionError('Could not find that user.'); return }
+    setWithdrawBusy(true)
+    const { error } = await supabase.from('withdrawals').insert({
+      user_id: ownerProfile.id,
+      username: withdrawForm.user,
+      amount: Number(withdrawForm.amount),
+      withdrawal_date: withdrawForm.date,
+      notes: withdrawForm.notes.trim(),
+    })
+    setWithdrawBusy(false)
+    if (error) setActionError(error.message)
+    else { setActionError(null); setWithdrawForm({ user: '', amount: '', date: todayStr(), notes: '' }); reloadWithdrawals() }
+  }
+
+  async function deleteWithdrawal(id) {
+    const { error } = await supabase.from('withdrawals').delete().eq('id', id)
+    if (error) setActionError(error.message); else reloadWithdrawals()
+  }
 
   const visibleTrades = useMemo(() => {
     return userFilter === 'ALL' ? trades : trades.filter(t => t.username === userFilter)
@@ -262,9 +313,10 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     const realized = closed.reduce((sum, t) => sum + (pnlFor(t) || 0), 0)
     const wins = closed.filter(t => (pnlFor(t) || 0) > 0).length
     const winRate = closed.length ? Math.round((wins / closed.length) * 100) : null
-    const totalPot = profiles.reduce((sum, p) => sum + Number(p.starting_pot ?? 0), 0) + realized
-    return { open, closedCount: closed.length, realized, winRate, totalPot }
-  }, [trades, profiles])
+    const totalWithdrawn = withdrawals.reduce((sum, w) => sum + Number(w.amount), 0)
+    const totalPot = profiles.reduce((sum, p) => sum + Number(p.starting_pot ?? 0), 0) + realized - totalWithdrawn
+    return { open, closedCount: closed.length, realized, winRate, totalPot, totalWithdrawn }
+  }, [trades, profiles, withdrawals])
 
   const managedTrades = isAdmin ? trades : trades.filter(t => t.username === currentUser.username)
 
@@ -362,6 +414,12 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                     <span className="mono" style={{ fontSize: 12 }}>
                       <span style={{ color: '#6B7280' }}>starting ${fmt(p.starting_pot)} · realized </span>
                       <span style={{ color: p.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{p.realized >= 0 ? '+' : ''}${fmt(p.realized)}</span>
+                      {p.withdrawn > 0 && (
+                        <>
+                          <span style={{ color: '#6B7280' }}> · withdrawn </span>
+                          <span style={{ color: '#E8574A' }}>-${fmt(p.withdrawn)}</span>
+                        </>
+                      )}
                       <span style={{ color: '#6B7280' }}> · </span>
                       <span style={{ color: '#E8A33D' }}>pot ${fmt(p.pot)}</span>
                     </span>
@@ -392,6 +450,23 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                 </div>
               )}
             </div>
+
+            {(isAdmin ? withdrawals : withdrawals.filter(w => w.username === currentUser.username)).length > 0 && (
+              <div className="panel" style={{ marginBottom: 16 }}>
+                <p className="panel-title">{isAdmin ? 'WITHDRAWAL HISTORY' : 'YOUR WITHDRAWALS'}</p>
+                <div className="group-list">
+                  {(isAdmin ? withdrawals : withdrawals.filter(w => w.username === currentUser.username)).map(w => (
+                    <div key={w.id} className="group-row">
+                      <span>
+                        <span style={{ color: '#E8E6E1' }}>{w.username}</span>
+                        <span style={{ color: '#6B7280' }}> · {w.withdrawal_date}{w.notes ? ` · ${w.notes}` : ''}</span>
+                      </span>
+                      <span style={{ color: '#E8574A' }}>-${fmt(w.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {isAdmin ? (
               <div className="filter-row">
                 <span>USER</span>
@@ -494,9 +569,52 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   ))}
                 </div>
                 <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 10, marginBottom: 0 }}>
-                  each trader's pot = their starting pot + their own realized P&L
+                  each trader's pot = their starting pot + their own realized P&L - their withdrawals
                 </p>
               </div>
+            )}
+            {isAdmin && (
+              <form className="panel" onSubmit={handleWithdraw} style={{ marginBottom: 16 }}>
+                <p className="panel-title">WITHDRAW PROFIT</p>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>USER</label>
+                    <select value={withdrawForm.user} onChange={e => setWithdrawForm({ ...withdrawForm, user: e.target.value })}>
+                      <option value="">select…</option>
+                      {usernames.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>AMOUNT ($)</label>
+                    <input type="number" step="0.01" value={withdrawForm.amount} onChange={e => setWithdrawForm({ ...withdrawForm, amount: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>DATE</label>
+                    <input type="date" value={withdrawForm.date} onChange={e => setWithdrawForm({ ...withdrawForm, date: e.target.value })} />
+                  </div>
+                </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <label>NOTES</label>
+                  <input value={withdrawForm.notes} onChange={e => setWithdrawForm({ ...withdrawForm, notes: e.target.value })} placeholder="optional" />
+                </div>
+                <button className="btn-primary" style={{ marginTop: 12 }} type="submit" disabled={withdrawBusy}>RECORD WITHDRAWAL</button>
+                <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
+                  knocks the amount off that user's pot and shows up in their withdrawal history
+                </p>
+                {withdrawals.length > 0 && (
+                  <div className="group-list" style={{ marginTop: 16 }}>
+                    {withdrawals.map(w => (
+                      <div key={w.id} className="group-row">
+                        <span>
+                          <span style={{ color: '#E8E6E1' }}>{w.username}</span>
+                          <span style={{ color: '#6B7280' }}> · {w.withdrawal_date} · -${fmt(w.amount)}{w.notes ? ` · ${w.notes}` : ''}</span>
+                        </span>
+                        <button type="button" className="icon-btn" onClick={() => deleteWithdrawal(w.id)}><Trash2 size={13} color="#6B7280" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </form>
             )}
             <form className="panel" onSubmit={handleAdd}>
               <p className="panel-title"><Plus size={12} /> ADD TRADE</p>
