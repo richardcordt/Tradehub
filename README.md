@@ -62,6 +62,23 @@ and deploy.
   This is visible to everyone on the Ledger tab under "Pots by user".
 - The header's **Total Pot** is the sum of everyone's individual pots.
 
+## Installing it like an app (no app store needed)
+
+This app is set up as a **Progressive Web App (PWA)**. Once deployed, anyone can add
+it to their phone's home screen and it'll open full-screen with its own icon, just
+like a normal app — no App Store or Play Store required.
+
+**On iPhone (Safari):**
+1. Open your deployed site in Safari (must be Safari, not Chrome, for this to work on iOS)
+2. Tap the Share icon (square with an arrow)
+3. Tap "Add to Home Screen"
+
+**On Android (Chrome):**
+1. Open your deployed site in Chrome
+2. Tap the "⋮" menu → "Add to Home screen" (or Chrome may prompt automatically)
+
+That's it — the icon, splash screen, and full-screen behavior are already configured.
+
 ## Notes
 
 - To promote someone to admin later, or add more admins, run in the SQL Editor:
