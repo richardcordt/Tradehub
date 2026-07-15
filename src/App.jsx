@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Lock, X, Trash2, ArrowUpCircle, ArrowDownCircle, LogOut, UserPlus, KeyRound } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase, supabaseCreateUserClient } from './supabaseClient'
+import { Analytics } from '@vercel/analytics/react'
 
 function fmt(n) {
   if (n === '' || n === null || n === undefined || isNaN(n)) return '—'
@@ -78,28 +79,41 @@ export default function App() {
   }, [session, loadTrades, loadProfiles, loadWithdrawals])
 
   if (session === undefined) {
-    return <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
+    return (
+      <>
+        <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
+        <Analytics />
+      </>
+    )
   }
 
   if (!session || !profile) {
-    return <AuthScreen />
+    return (
+      <>
+        <AuthScreen />
+        <Analytics />
+      </>
+    )
   }
 
   return (
-    <MainApp
-      currentUser={profile}
-      profiles={profiles}
-      trades={trades}
-      reloadTrades={loadTrades}
-      reloadProfiles={loadProfiles}
-      withdrawals={withdrawals}
-      reloadWithdrawals={loadWithdrawals}
-      tab={tab}
-      setTab={setTab}
-      userFilter={userFilter}
-      setUserFilter={setUserFilter}
-      loadError={loadError}
-    />
+    <>
+      <MainApp
+        currentUser={profile}
+        profiles={profiles}
+        trades={trades}
+        reloadTrades={loadTrades}
+        reloadProfiles={loadProfiles}
+        withdrawals={withdrawals}
+        reloadWithdrawals={loadWithdrawals}
+        tab={tab}
+        setTab={setTab}
+        userFilter={userFilter}
+        setUserFilter={setUserFilter}
+        loadError={loadError}
+      />
+      <Analytics />
+    </>
   )
 }
 
