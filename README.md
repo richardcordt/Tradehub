@@ -82,9 +82,10 @@ That's it — the icon, splash screen, and full-screen behavior are already conf
 ## Live tab
 
 Shows the current BTC/USDT price (from Binance's public API, refreshed every 5
-seconds) alongside each user's most recent open trade and a running P&L calculated
-against that live price. Visible to everyone — traders see their own latest open
-trade, admins see everyone's.
+seconds), a 4-hour candlestick chart (refreshed every 30 seconds) with a dashed
+horizontal line marking each shown trade's entry price, and each user's most recent
+open trade with a running P&L calculated against the live price. Visible to everyone
+— traders see their own latest open trade and entry line, admins see everyone's.
 
 Important: for this to be meaningful, whatever you enter as **Entry Price** when
 opening a trade should be the actual real-world BTC/USDT price at that moment —

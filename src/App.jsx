@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Lock, X, Trash2, ArrowUpCircle, ArrowDownCircle, LogOut, UserPlus, KeyRound } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart, Bar, ReferenceLine } from 'recharts'
 import { supabase, supabaseCreateUserClient } from './supabaseClient'
 
 function fmt(n) {
@@ -14,6 +14,30 @@ function pnlFor(t) {
   // the entered close % directly represents the trade's result: negative = loss, positive = profit,
   // regardless of side (side is just a record of the position direction, not part of the P&L sign).
   return t.amount * (t.leverage || 1) * pctMove
+}
+
+// Custom candlestick shape for recharts. Used with a Bar whose dataKey returns
+// [low, high] (a "range" bar) — recharts maps that range onto y/height for us,
+// and we use payload's open/close to draw the wick and body within that range.
+function CandleShape(props) {
+  const { x, y, width, height, payload } = props
+  const { open, close, high, low } = payload
+  const isUp = close >= open
+  const color = isUp ? '#3DDC84' : '#E8574A'
+  const range = (high - low) || 1
+  const yFor = (v) => y + ((high - v) / range) * height
+  const wickX = x + width / 2
+  const bodyTop = Math.min(yFor(open), yFor(close))
+  const bodyBottom = Math.max(yFor(open), yFor(close))
+  const bodyHeight = Math.max(1, bodyBottom - bodyTop)
+  const bodyWidth = Math.max(2, width * 0.6)
+  const bodyX = x + (width - bodyWidth) / 2
+  return (
+    <g>
+      <line x1={wickX} y1={y} x2={wickX} y2={y + height} stroke={color} strokeWidth={1} />
+      <rect x={bodyX} y={bodyTop} width={bodyWidth} height={bodyHeight} fill={color} />
+    </g>
+  )
 }
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
@@ -218,6 +242,35 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     }
     fetchPrice()
     const interval = setInterval(fetchPrice, 5000)
+    return () => { active = false; clearInterval(interval) }
+  }, [tab])
+
+  // 4H candlestick data for BTC/USDT, also from Binance's public API. Refreshed less
+  // often than the live price since 4-hour candles don't change that fast.
+  const [candles, setCandles] = useState([])
+  const [candlesError, setCandlesError] = useState(null)
+  useEffect(() => {
+    if (tab !== 'live') return
+    let active = true
+    async function fetchCandles() {
+      try {
+        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=4h&limit=100')
+        if (!res.ok) throw new Error('bad response')
+        const data = await res.json()
+        const parsed = data.map(k => ({
+          time: k[0],
+          open: Number(k[1]),
+          high: Number(k[2]),
+          low: Number(k[3]),
+          close: Number(k[4]),
+        }))
+        if (active) { setCandles(parsed); setCandlesError(null) }
+      } catch (e) {
+        if (active) setCandlesError('Could not fetch chart data right now')
+      }
+    }
+    fetchCandles()
+    const interval = setInterval(fetchCandles, 30000)
     return () => { active = false; clearInterval(interval) }
   }, [tab])
 
@@ -640,6 +693,57 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
               <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
                 updates every 5 seconds · for this to be meaningful, enter the real BTC/USDT price as your entry price when opening a trade
               </p>
+            </div>
+
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <p className="panel-title">BTC/USDT — 4H CHART</p>
+              {candlesError ? (
+                <p className="error-text">{candlesError}</p>
+              ) : candles.length === 0 ? (
+                <p className="empty" style={{ padding: '20px 0' }}>loading chart…</p>
+              ) : (
+                <div style={{ width: '100%', height: 320 }}>
+                  <ResponsiveContainer>
+                    <ComposedChart data={candles} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                      <CartesianGrid stroke="#1B2027" strokeDasharray="3 3" />
+                      <XAxis
+                        dataKey="time"
+                        tickFormatter={t => new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' })}
+                        tick={{ fill: '#6B7280', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }}
+                        axisLine={{ stroke: '#2A2F36' }}
+                        tickLine={false}
+                        minTickGap={50}
+                      />
+                      <YAxis
+                        domain={['auto', 'auto']}
+                        tick={{ fill: '#6B7280', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }}
+                        axisLine={{ stroke: '#2A2F36' }}
+                        tickLine={false}
+                        width={70}
+                        tickFormatter={v => `$${fmt(v)}`}
+                      />
+                      <Tooltip
+                        contentStyle={{ background: '#0E1216', border: '1px solid #2A2F36', borderRadius: 3, fontFamily: 'IBM Plex Mono, monospace', fontSize: 12 }}
+                        labelFormatter={t => new Date(t).toLocaleString()}
+                        formatter={(_value, _name, props) => {
+                          const d = props.payload
+                          return [`O ${fmt(d.open)}  H ${fmt(d.high)}  L ${fmt(d.low)}  C ${fmt(d.close)}`, '']
+                        }}
+                      />
+                      <Bar dataKey={(d) => [d.low, d.high]} isAnimationActive={false} shape={CandleShape} />
+                      {latestOpenTrades.map(t => (
+                        <ReferenceLine
+                          key={t.id}
+                          y={t.entry_price}
+                          stroke="#E8A33D"
+                          strokeDasharray="4 4"
+                          label={{ value: `${t.username} entry`, position: 'insideTopRight', fill: '#E8A33D', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' }}
+                        />
+                      ))}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
 
             <div className="panel">
