@@ -79,6 +79,20 @@ like a normal app — no App Store or Play Store required.
 
 That's it — the icon, splash screen, and full-screen behavior are already configured.
 
+## Live tab
+
+Shows the current BTC/USDT price (from Binance's public API, refreshed every 5
+seconds) alongside each user's most recent open trade and a running P&L calculated
+against that live price. Visible to everyone — traders see their own latest open
+trade, admins see everyone's.
+
+Important: for this to be meaningful, whatever you enter as **Entry Price** when
+opening a trade should be the actual real-world BTC/USDT price at that moment —
+otherwise the live P&L comparison won't reflect anything real. Unlike the manual
+"Result (%)" used when closing a trade, this live calculation does account for side
+(a SHORT position shows a profit when BTC's price falls, and a loss when it rises),
+since it's driven by real price movement rather than a number you typed in yourself.
+
 ## Notes
 
 - To promote someone to admin later, or add more admins, run in the SQL Editor:

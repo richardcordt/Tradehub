@@ -199,6 +199,47 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
   const [potInputs, setPotInputs] = useState({})
   const [potBusyId, setPotBusyId] = useState(null)
 
+  // Live BTC/USDT price, polled from Binance's public API while the Live tab is open.
+  const [livePrice, setLivePrice] = useState(null)
+  const [priceError, setPriceError] = useState(null)
+  useEffect(() => {
+    if (tab !== 'live') return
+    let active = true
+    async function fetchPrice() {
+      try {
+        const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT')
+        if (!res.ok) throw new Error('bad response')
+        const data = await res.json()
+        if (active) { setLivePrice(Number(data.price)); setPriceError(null) }
+      } catch (e) {
+        if (active) setPriceError('Could not fetch live BTC/USDT price right now')
+      }
+    }
+    fetchPrice()
+    const interval = setInterval(fetchPrice, 5000)
+    return () => { active = false; clearInterval(interval) }
+  }, [tab])
+
+  // each user's most recent OPEN trade (RLS already limits `trades` to just your own
+  // unless you're admin, so this naturally scopes correctly for either case)
+  const latestOpenTrades = useMemo(() => {
+    const latestByUser = {}
+    trades.filter(t => t.status === 'OPEN').forEach(t => {
+      const existing = latestByUser[t.username]
+      if (!existing || (t.created_at || '') > (existing.created_at || '')) {
+        latestByUser[t.username] = t
+      }
+    })
+    return Object.values(latestByUser).sort((a, b) => a.username.localeCompare(b.username))
+  }, [trades])
+
+  function livePnlFor(t, price) {
+    if (price === null || price === undefined) return null
+    const pctMove = (price - t.entry_price) / t.entry_price
+    const directional = t.side === 'LONG' ? pctMove : -pctMove
+    return t.amount * (t.leverage || 1) * directional
+  }
+
   useEffect(() => {
     const next = {}
     profiles.forEach(p => { next[p.id] = String(p.starting_pot ?? 0) })
@@ -438,6 +479,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
 
       <div className="tabs">
         <button className={`tab-btn ${tab === 'ledger' ? 'active' : ''}`} onClick={() => setTab('ledger')}>LEDGER</button>
+        <button className={`tab-btn ${tab === 'live' ? 'active' : ''}`} onClick={() => setTab('live')}>LIVE</button>
         {isAdmin && (
           <button className={`tab-btn ${tab === 'mine' ? 'active' : ''}`} onClick={() => setTab('mine')}>
             <Lock size={12} /> ADMIN
@@ -579,6 +621,52 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                 </table>
               </div>
             )}
+          </div>
+        ) : tab === 'live' ? (
+          <div>
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <p className="panel-title">
+                <span className="status-dot open" style={{ marginRight: 6 }}></span>
+                BTC/USDT LIVE
+              </p>
+              {priceError ? (
+                <p className="error-text">{priceError}</p>
+              ) : livePrice === null ? (
+                <p className="empty" style={{ padding: '12px 0' }}>fetching live price…</p>
+              ) : (
+                <p className="mono" style={{ fontSize: 28, color: '#E8A33D', margin: 0 }}>${fmt(livePrice)}</p>
+              )}
+              <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
+                updates every 5 seconds · for this to be meaningful, enter the real BTC/USDT price as your entry price when opening a trade
+              </p>
+            </div>
+
+            <div className="panel">
+              <p className="panel-title">{isAdmin ? "LATEST OPEN TRADE PER USER" : "YOUR LATEST OPEN TRADE"}</p>
+              {latestOpenTrades.length === 0 ? (
+                <p className="empty" style={{ padding: '20px 0' }}>{isAdmin ? 'no open trades right now' : "you don't have an open trade right now"}</p>
+              ) : (
+                <div className="group-list">
+                  {latestOpenTrades.map(t => {
+                    const livePnl = livePnlFor(t, livePrice)
+                    return (
+                      <div key={t.id} className="group-row">
+                        <span>
+                          <span style={{ color: '#E8E6E1' }}>{t.username}</span>
+                          <span className={`side ${t.side === 'LONG' ? 'long' : 'short'}`} style={{ marginLeft: 8 }}>
+                            {t.side === 'LONG' ? <ArrowUpCircle size={11} /> : <ArrowDownCircle size={11} />}{t.side}
+                          </span>
+                          <span style={{ color: '#6B7280' }}> · ${fmt(t.amount)} · {t.leverage}× · entry {fmt(t.entry_price)}</span>
+                        </span>
+                        <span style={{ color: livePnl === null ? '#4B5158' : livePnl >= 0 ? '#3DDC84' : '#E8574A' }}>
+                          {livePnl === null ? '—' : `${livePnl >= 0 ? '+' : ''}$${fmt(livePnl)}`}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div>
