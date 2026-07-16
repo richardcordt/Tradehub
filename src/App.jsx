@@ -25,7 +25,7 @@ export default function App() {
   const [profiles, setProfiles] = useState([])
   const [withdrawals, setWithdrawals] = useState([])
   const [deposits, setDeposits] = useState([])
-  const [tab, setTab] = useState('ledger')
+  const [tab, setTab] = useState('live')
   const [userFilter, setUserFilter] = useState('ALL')
   const [loadError, setLoadError] = useState(null)
 
@@ -41,7 +41,8 @@ export default function App() {
   // Load this user's profile once logged in
   useEffect(() => {
     if (!session) { setProfile(null); return }
-    (async () => {
+    setTab('live')
+    ;(async () => {
       const { data, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
       if (!error) setProfile(data)
     })()
@@ -195,7 +196,7 @@ function AuthScreen() {
 
 function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, withdrawals, reloadWithdrawals, deposits, reloadDeposits, tab, setTab, userFilter, setUserFilter, loadError }) {
   const isAdmin = currentUser.role === 'admin'
-  useEffect(() => { if (!isAdmin && tab === 'mine') setTab('ledger') }, [isAdmin, tab, setTab])
+  useEffect(() => { if (!isAdmin && tab === 'mine') setTab('live') }, [isAdmin, tab, setTab])
   const [potInputs, setPotInputs] = useState({})
   const [potBusyId, setPotBusyId] = useState(null)
 
