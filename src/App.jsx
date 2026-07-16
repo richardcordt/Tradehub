@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { Plus, Lock, X, Trash2, ArrowUpCircle, ArrowDownCircle, LogOut, UserPlus, KeyRound } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase, supabaseCreateUserClient } from './supabaseClient'
-import { Analytics } from '@vercel/analytics/react'
 
 function fmt(n) {
   if (n === '' || n === null || n === undefined || isNaN(n)) return '—'
@@ -25,6 +24,7 @@ export default function App() {
   const [trades, setTrades] = useState([])
   const [profiles, setProfiles] = useState([])
   const [withdrawals, setWithdrawals] = useState([])
+  const [deposits, setDeposits] = useState([])
   const [tab, setTab] = useState('ledger')
   const [userFilter, setUserFilter] = useState('ALL')
   const [loadError, setLoadError] = useState(null)
@@ -63,57 +63,53 @@ export default function App() {
     if (!error) setWithdrawals(data)
   }, [])
 
+  const loadDeposits = useCallback(async () => {
+    const { data, error } = await supabase.from('deposits').select('*').order('deposit_date', { ascending: false })
+    if (!error) setDeposits(data)
+  }, [])
+
   useEffect(() => {
     if (!session) return
     loadTrades()
     loadProfiles()
     loadWithdrawals()
+    loadDeposits()
     // live updates so all logged-in users see changes without refreshing
     const channel = supabase
       .channel('trades-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'trades' }, () => loadTrades())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadProfiles())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'withdrawals' }, () => loadWithdrawals())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deposits' }, () => loadDeposits())
       .subscribe()
     return () => supabase.removeChannel(channel)
-  }, [session, loadTrades, loadProfiles, loadWithdrawals])
+  }, [session, loadTrades, loadProfiles, loadWithdrawals, loadDeposits])
 
   if (session === undefined) {
-    return (
-      <>
-        <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
-        <Analytics />
-      </>
-    )
+    return <div className="center-screen mono" style={{ color: '#6B7280', fontSize: 12 }}>loading ledger…</div>
   }
 
   if (!session || !profile) {
-    return (
-      <>
-        <AuthScreen />
-        <Analytics />
-      </>
-    )
+    return <AuthScreen />
   }
 
   return (
-    <>
-      <MainApp
-        currentUser={profile}
-        profiles={profiles}
-        trades={trades}
-        reloadTrades={loadTrades}
-        reloadProfiles={loadProfiles}
-        withdrawals={withdrawals}
-        reloadWithdrawals={loadWithdrawals}
-        tab={tab}
-        setTab={setTab}
-        userFilter={userFilter}
-        setUserFilter={setUserFilter}
-        loadError={loadError}
-      />
-      <Analytics />
-    </>
+    <MainApp
+      currentUser={profile}
+      profiles={profiles}
+      trades={trades}
+      reloadTrades={loadTrades}
+      reloadProfiles={loadProfiles}
+      withdrawals={withdrawals}
+      reloadWithdrawals={loadWithdrawals}
+      deposits={deposits}
+      reloadDeposits={loadDeposits}
+      tab={tab}
+      setTab={setTab}
+      userFilter={userFilter}
+      setUserFilter={setUserFilter}
+      loadError={loadError}
+    />
   )
 }
 
@@ -197,7 +193,7 @@ function AuthScreen() {
   )
 }
 
-function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, withdrawals, reloadWithdrawals, tab, setTab, userFilter, setUserFilter, loadError }) {
+function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, withdrawals, reloadWithdrawals, deposits, reloadDeposits, tab, setTab, userFilter, setUserFilter, loadError }) {
   const isAdmin = currentUser.role === 'admin'
   useEffect(() => { if (!isAdmin && tab === 'mine') setTab('ledger') }, [isAdmin, tab, setTab])
   const [potInputs, setPotInputs] = useState({})
@@ -253,20 +249,26 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     withdrawals.forEach(w => {
       withdrawnByUser[w.username] = (withdrawnByUser[w.username] || 0) + Number(w.amount)
     })
+    const depositedByUser = {}
+    deposits.forEach(d => {
+      depositedByUser[d.username] = (depositedByUser[d.username] || 0) + Number(d.amount)
+    })
     return profiles.map(p => {
       const realized = realizedByUser[p.username] || 0
       const withdrawn = withdrawnByUser[p.username] || 0
+      const deposited = depositedByUser[p.username] || 0
       return {
         ...p,
         realized,
         withdrawn,
-        pot: Number(p.starting_pot ?? 0) + realized - withdrawn,
+        deposited,
+        pot: Number(p.starting_pot ?? 0) + realized + deposited - withdrawn,
       }
     }).sort((a, b) => a.username.localeCompare(b.username))
-  }, [profiles, trades, withdrawals])
+  }, [profiles, trades, withdrawals, deposits])
 
   // cumulative pot value over time for the logged-in user, plotted as a line chart.
-  // merges closed trades (add P&L) and withdrawals (subtract) in chronological order.
+  // merges closed trades (add P&L), deposits (add), and withdrawals (subtract) chronologically.
   const potHistory = useMemo(() => {
     const starting = Number(currentUser.starting_pot ?? 0)
     const events = [
@@ -276,6 +278,9 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
       ...withdrawals
         .filter(w => w.username === currentUser.username)
         .map(w => ({ date: w.withdrawal_date, delta: -Number(w.amount) })),
+      ...deposits
+        .filter(d => d.username === currentUser.username)
+        .map(d => ({ date: d.deposit_date, delta: Number(d.amount) })),
     ].sort((a, b) => (a.date || '').localeCompare(b.date || ''))
     let running = starting
     const points = [{ date: 'start', pot: running }]
@@ -284,7 +289,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
       points.push({ date: e.date, pot: running })
     })
     return points
-  }, [trades, withdrawals, currentUser])
+  }, [trades, withdrawals, deposits, currentUser])
 
   const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
@@ -317,6 +322,32 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     if (error) setActionError(error.message); else reloadWithdrawals()
   }
 
+  const [depositForm, setDepositForm] = useState({ user: '', amount: '', date: todayStr(), notes: '' })
+  const [depositBusy, setDepositBusy] = useState(false)
+
+  async function handleDeposit(e) {
+    e.preventDefault()
+    if (!depositForm.user || !depositForm.amount) return
+    const ownerProfile = profiles.find(p => p.username === depositForm.user)
+    if (!ownerProfile) { setActionError('Could not find that user.'); return }
+    setDepositBusy(true)
+    const { error } = await supabase.from('deposits').insert({
+      user_id: ownerProfile.id,
+      username: depositForm.user,
+      amount: Number(depositForm.amount),
+      deposit_date: depositForm.date,
+      notes: depositForm.notes.trim(),
+    })
+    setDepositBusy(false)
+    if (error) setActionError(error.message)
+    else { setActionError(null); setDepositForm({ user: '', amount: '', date: todayStr(), notes: '' }); reloadDeposits() }
+  }
+
+  async function deleteDeposit(id) {
+    const { error } = await supabase.from('deposits').delete().eq('id', id)
+    if (error) setActionError(error.message); else reloadDeposits()
+  }
+
   const visibleTrades = useMemo(() => {
     return userFilter === 'ALL' ? trades : trades.filter(t => t.username === userFilter)
   }, [trades, userFilter])
@@ -328,9 +359,10 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     const wins = closed.filter(t => (pnlFor(t) || 0) > 0).length
     const winRate = closed.length ? Math.round((wins / closed.length) * 100) : null
     const totalWithdrawn = withdrawals.reduce((sum, w) => sum + Number(w.amount), 0)
-    const totalPot = profiles.reduce((sum, p) => sum + Number(p.starting_pot ?? 0), 0) + realized - totalWithdrawn
-    return { open, closedCount: closed.length, realized, winRate, totalPot, totalWithdrawn }
-  }, [trades, profiles, withdrawals])
+    const totalDeposited = deposits.reduce((sum, d) => sum + Number(d.amount), 0)
+    const totalPot = profiles.reduce((sum, p) => sum + Number(p.starting_pot ?? 0), 0) + realized + totalDeposited - totalWithdrawn
+    return { open, closedCount: closed.length, realized, winRate, totalPot, totalWithdrawn, totalDeposited }
+  }, [trades, profiles, withdrawals, deposits])
 
   const managedTrades = isAdmin ? trades : trades.filter(t => t.username === currentUser.username)
 
@@ -428,6 +460,12 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                     <span className="mono" style={{ fontSize: 12 }}>
                       <span style={{ color: '#6B7280' }}>starting ${fmt(p.starting_pot)} · realized </span>
                       <span style={{ color: p.realized >= 0 ? '#3DDC84' : '#E8574A' }}>{p.realized >= 0 ? '+' : ''}${fmt(p.realized)}</span>
+                      {p.deposited > 0 && (
+                        <>
+                          <span style={{ color: '#6B7280' }}> · deposited </span>
+                          <span style={{ color: '#3DDC84' }}>+${fmt(p.deposited)}</span>
+                        </>
+                      )}
                       {p.withdrawn > 0 && (
                         <>
                           <span style={{ color: '#6B7280' }}> · withdrawn </span>
@@ -465,22 +503,31 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
               )}
             </div>
 
-            {(isAdmin ? withdrawals : withdrawals.filter(w => w.username === currentUser.username)).length > 0 && (
-              <div className="panel" style={{ marginBottom: 16 }}>
-                <p className="panel-title">{isAdmin ? 'WITHDRAWAL HISTORY' : 'YOUR WITHDRAWALS'}</p>
-                <div className="group-list">
-                  {(isAdmin ? withdrawals : withdrawals.filter(w => w.username === currentUser.username)).map(w => (
-                    <div key={w.id} className="group-row">
-                      <span>
-                        <span style={{ color: '#E8E6E1' }}>{w.username}</span>
-                        <span style={{ color: '#6B7280' }}> · {w.withdrawal_date}{w.notes ? ` · ${w.notes}` : ''}</span>
-                      </span>
-                      <span style={{ color: '#E8574A' }}>-${fmt(w.amount)}</span>
-                    </div>
-                  ))}
+            {(() => {
+              const combined = [
+                ...withdrawals.map(w => ({ ...w, kind: 'withdrawal', date: w.withdrawal_date })),
+                ...deposits.map(d => ({ ...d, kind: 'deposit', date: d.deposit_date })),
+              ]
+              const relevant = (isAdmin ? combined : combined.filter(x => x.username === currentUser.username))
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+              if (relevant.length === 0) return null
+              return (
+                <div className="panel" style={{ marginBottom: 16 }}>
+                  <p className="panel-title">{isAdmin ? 'FUND HISTORY' : 'YOUR FUND HISTORY'}</p>
+                  <div className="group-list">
+                    {relevant.map(x => (
+                      <div key={`${x.kind}-${x.id}`} className="group-row">
+                        <span>
+                          <span style={{ color: '#E8E6E1' }}>{x.username}</span>
+                          <span style={{ color: '#6B7280' }}> · {x.kind === 'deposit' ? 'deposit' : 'withdrawal'} · {x.date}{x.notes ? ` · ${x.notes}` : ''}</span>
+                        </span>
+                        <span style={{ color: x.kind === 'deposit' ? '#3DDC84' : '#E8574A' }}>{x.kind === 'deposit' ? '+' : '-'}${fmt(x.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
             {isAdmin ? (
               <div className="filter-row">
                 <span>USER</span>
@@ -583,9 +630,52 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   ))}
                 </div>
                 <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 10, marginBottom: 0 }}>
-                  each trader's pot = their starting pot + their own realized P&L - their withdrawals
+                  each trader's pot = their starting pot + their own realized P&L + deposits - withdrawals
                 </p>
               </div>
+            )}
+            {isAdmin && (
+              <form className="panel" onSubmit={handleDeposit} style={{ marginBottom: 16 }}>
+                <p className="panel-title">ADD FUNDS</p>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>USER</label>
+                    <select value={depositForm.user} onChange={e => setDepositForm({ ...depositForm, user: e.target.value })}>
+                      <option value="">select…</option>
+                      {usernames.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>AMOUNT ($)</label>
+                    <input type="number" step="0.01" value={depositForm.amount} onChange={e => setDepositForm({ ...depositForm, amount: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>DATE</label>
+                    <input type="date" value={depositForm.date} onChange={e => setDepositForm({ ...depositForm, date: e.target.value })} />
+                  </div>
+                </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <label>NOTES</label>
+                  <input value={depositForm.notes} onChange={e => setDepositForm({ ...depositForm, notes: e.target.value })} placeholder="optional" />
+                </div>
+                <button className="btn-primary" style={{ marginTop: 12 }} type="submit" disabled={depositBusy}>RECORD DEPOSIT</button>
+                <p style={{ fontSize: 10, color: '#4B5158', fontFamily: 'var(--mono)', marginTop: 8, marginBottom: 0 }}>
+                  adds the amount to that user's pot and shows up in their fund history
+                </p>
+                {deposits.length > 0 && (
+                  <div className="group-list" style={{ marginTop: 16 }}>
+                    {deposits.map(d => (
+                      <div key={d.id} className="group-row">
+                        <span>
+                          <span style={{ color: '#E8E6E1' }}>{d.username}</span>
+                          <span style={{ color: '#6B7280' }}> · {d.deposit_date} · +${fmt(d.amount)}{d.notes ? ` · ${d.notes}` : ''}</span>
+                        </span>
+                        <button type="button" className="icon-btn" onClick={() => deleteDeposit(d.id)}><Trash2 size={13} color="#6B7280" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </form>
             )}
             {isAdmin && (
               <form className="panel" onSubmit={handleWithdraw} style={{ marginBottom: 16 }}>

@@ -39,7 +39,18 @@ create table public.withdrawals (
   created_at timestamptz default now()
 );
 
--- 4. Auto-create a profile row whenever someone signs up.
+-- 4. Deposits: admin-only records of money added to a user's pot
+create table public.deposits (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  username text not null,
+  amount numeric not null check (amount > 0),
+  deposit_date date not null default current_date,
+  notes text,
+  created_at timestamptz default now()
+);
+
+-- 5. Auto-create a profile row whenever someone signs up.
 --    The very first person to ever sign up becomes admin automatically;
 --    everyone after that is a regular trader.
 create or replace function public.handle_new_user()
@@ -77,6 +88,7 @@ $$;
 alter table public.profiles enable row level security;
 alter table public.trades enable row level security;
 alter table public.withdrawals enable row level security;
+alter table public.deposits enable row level security;
 
 -- Everyone logged in can see their own profile; admins can see everyone's
 -- (needed for the admin "assign user" dropdown, per-user pots, and usernames on trades).
@@ -129,4 +141,17 @@ create policy "withdrawals insertable by admin only"
 
 create policy "withdrawals deletable by admin only"
   on public.withdrawals for delete
+  using (public.is_admin());
+
+-- Deposits: a trader can see their own; only admins can create or delete.
+create policy "deposits readable own or admin"
+  on public.deposits for select
+  using (auth.uid() = user_id or public.is_admin());
+
+create policy "deposits insertable by admin only"
+  on public.deposits for insert
+  with check (public.is_admin());
+
+create policy "deposits deletable by admin only"
+  on public.deposits for delete
   using (public.is_admin());
