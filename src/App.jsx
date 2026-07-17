@@ -13,7 +13,8 @@ function pnlFor(t) {
   const pctMove = (t.exit_price - t.entry_price) / t.entry_price
   // the entered close % directly represents the trade's result: negative = loss, positive = profit,
   // regardless of side (side is just a record of the position direction, not part of the P&L sign).
-  return t.amount * (t.leverage || 1) * pctMove
+  const gross = t.amount * (t.leverage || 1) * pctMove
+  return gross - Number(t.fees || 0)
 }
 
 // Custom candlestick shape for recharts. Used with a Bar whose dataKey returns
@@ -254,7 +255,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     let active = true
     async function fetchCandles() {
       try {
-        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=4h&limit=100')
+        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=4h&limit=24')
         if (!res.ok) throw new Error('bad response')
         const data = await res.json()
         const parsed = data.map(k => ({
@@ -388,7 +389,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
 
   const [form, setForm] = useState({ user: isAdmin ? '' : currentUser.username, side: 'LONG', amount: '', leverage: '1', entryPrice: '', entryDate: todayStr(), notes: '' })
   const [closeModal, setCloseModal] = useState(null)
-  const [closeForm, setCloseForm] = useState({ movePercent: '', exitDate: todayStr() })
+  const [closeForm, setCloseForm] = useState({ movePercent: '', exitDate: todayStr(), fees: '' })
   const [actionError, setActionError] = useState(null)
 
   const [withdrawForm, setWithdrawForm] = useState({ user: '', amount: '', date: todayStr(), notes: '' })
@@ -483,7 +484,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
   }
 
   function openCloseModal(id) {
-    setCloseForm({ movePercent: '', exitDate: todayStr() })
+    setCloseForm({ movePercent: '', exitDate: todayStr(), fees: '' })
     setCloseModal(id)
   }
 
@@ -494,7 +495,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     if (!trade) return
     const exitPrice = trade.entry_price * (1 + Number(closeForm.movePercent) / 100)
     const { error } = await supabase.from('trades')
-      .update({ status: 'CLOSED', exit_price: exitPrice, exit_date: closeForm.exitDate })
+      .update({ status: 'CLOSED', exit_price: exitPrice, exit_date: closeForm.exitDate, fees: Number(closeForm.fees) || 0 })
       .eq('id', closeModal)
     if (error) setActionError(error.message)
     else { setActionError(null); setCloseModal(null); reloadTrades() }
@@ -643,7 +644,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                     <tr>
                       <th>USER</th><th>SIDE</th>
                       <th className="right">AMOUNT ($)</th><th className="right">LEV</th><th className="right">ENTRY</th><th className="right">EXIT</th>
-                      <th>STATUS</th><th className="right">P&L</th>
+                      <th>STATUS</th><th className="right">FEES</th><th className="right">P&L</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -665,6 +666,7 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                             <span className={`status-dot ${t.status === 'OPEN' ? 'open' : 'closed'}`}></span>
                             <span style={{ color: t.status === 'OPEN' ? '#3DDC84' : '#6B7280' }}>{t.status}</span>
                           </td>
+                          <td className="right" style={{ color: '#6B7280' }}>{t.status === 'CLOSED' ? `$${fmt(t.fees)}` : '—'}</td>
                           <td className="right" style={{ color: pnl === null ? '#4B5158' : pnl >= 0 ? '#3DDC84' : '#E8574A' }}>
                             {pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}$${fmt(pnl)}`}
                           </td>
@@ -982,14 +984,19 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
                   const trade = trades.find(t => t.id === closeModal)
                   if (!trade) return null
                   const pct = Number(closeForm.movePercent) / 100
-                  const previewPnl = trade.amount * (trade.leverage || 1) * pct
+                  const gross = trade.amount * (trade.leverage || 1) * pct
+                  const previewPnl = gross - (Number(closeForm.fees) || 0)
                   return (
                     <p style={{ fontSize: 11, color: previewPnl >= 0 ? '#3DDC84' : '#E8574A', fontFamily: 'var(--mono)', marginTop: 6 }}>
-                      P&L {previewPnl >= 0 ? '+' : ''}${fmt(previewPnl)}
+                      P&L {previewPnl >= 0 ? '+' : ''}${fmt(previewPnl)}{Number(closeForm.fees) > 0 ? ` (after $${fmt(closeForm.fees)} fees)` : ''}
                     </p>
                   )
                 })()
               )}
+            </div>
+            <div className="field" style={{ marginBottom: 12 }}>
+              <label>TRADING FEES ($)</label>
+              <input type="number" step="0.01" min="0" placeholder="0.00" value={closeForm.fees} onChange={e => setCloseForm({ ...closeForm, fees: e.target.value })} />
             </div>
             <div className="field" style={{ marginBottom: 16 }}>
               <label>EXIT DATE</label>
@@ -1020,6 +1027,7 @@ function TradeGroup({ title, trades, onClose, onReopen, onDelete, closed }) {
                   <span style={{ color: '#E8E6E1' }}>{t.username}</span>
                   <span style={{ color: '#6B7280' }}> · {t.side} · ${fmt(t.amount)} · {t.leverage}× @ {fmt(t.entry_price)}{closed ? ` → ${fmt(t.exit_price)}` : ''}</span>
                   {closed && <span style={{ color: pnl >= 0 ? '#3DDC84' : '#E8574A' }}> · {pnl >= 0 ? '+' : ''}${fmt(pnl)}</span>}
+                  {closed && Number(t.fees) > 0 && <span style={{ color: '#6B7280' }}> (fees ${fmt(t.fees)})</span>}
                 </span>
                 <span className="row-actions">
                   {closed ? (
