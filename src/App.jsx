@@ -511,6 +511,45 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
     if (error) setActionError(error.message); else reloadTrades()
   }
 
+  const [editModal, setEditModal] = useState(null)
+  const [editForm, setEditForm] = useState(null)
+
+  function openEditModal(trade) {
+    setEditForm({
+      side: trade.side,
+      amount: String(trade.amount),
+      leverage: String(trade.leverage),
+      entryPrice: String(trade.entry_price),
+      entryDate: trade.entry_date,
+      notes: trade.notes || '',
+      exitPrice: trade.exit_price !== null ? String(trade.exit_price) : '',
+      exitDate: trade.exit_date || todayStr(),
+      fees: String(trade.fees ?? 0),
+    })
+    setEditModal(trade)
+  }
+
+  async function handleSaveEdit(e) {
+    e.preventDefault()
+    if (!editModal) return
+    const payload = {
+      side: editForm.side,
+      amount: Number(editForm.amount),
+      leverage: Number(editForm.leverage) || 1,
+      entry_price: Number(editForm.entryPrice),
+      entry_date: editForm.entryDate,
+      notes: editForm.notes.trim(),
+    }
+    if (editModal.status === 'CLOSED') {
+      payload.exit_price = Number(editForm.exitPrice)
+      payload.exit_date = editForm.exitDate
+      payload.fees = Number(editForm.fees) || 0
+    }
+    const { error } = await supabase.from('trades').update(payload).eq('id', editModal.id)
+    if (error) setActionError(error.message)
+    else { setActionError(null); setEditModal(null); reloadTrades() }
+  }
+
   return (
     <div className="app">
       <div className="header">
@@ -963,8 +1002,8 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
               <button className="btn-primary" style={{ marginTop: 12 }} type="submit">LOG TRADE</button>
             </form>
 
-            <TradeGroup title="OPEN POSITIONS" trades={managedTrades.filter(t => t.status === 'OPEN')} onClose={openCloseModal} onDelete={deleteTrade} />
-            <TradeGroup title="CLOSED POSITIONS" trades={managedTrades.filter(t => t.status === 'CLOSED')} onReopen={reopenTrade} onDelete={deleteTrade} closed />
+            <TradeGroup title="OPEN POSITIONS" trades={managedTrades.filter(t => t.status === 'OPEN')} onClose={openCloseModal} onDelete={deleteTrade} onEdit={openEditModal} />
+            <TradeGroup title="CLOSED POSITIONS" trades={managedTrades.filter(t => t.status === 'CLOSED')} onReopen={reopenTrade} onDelete={deleteTrade} onEdit={openEditModal} closed />
           </div>
         )}
       </div>
@@ -1006,11 +1045,84 @@ function MainApp({ currentUser, profiles, trades, reloadTrades, reloadProfiles, 
           </form>
         </div>
       )}
+
+      {editModal && editForm && (
+        <div className="modal-overlay">
+          <form className="modal" onSubmit={handleSaveEdit} style={{ maxWidth: 360 }}>
+            <div className="modal-head">
+              <p className="panel-title" style={{ margin: 0 }}>EDIT TRADE — {editModal.username}</p>
+              <button type="button" className="icon-btn" onClick={() => { setEditModal(null); setEditForm(null) }}><X size={14} color="#6B7280" /></button>
+            </div>
+            <div className="form-grid">
+              <div className="field">
+                <label>SIDE</label>
+                <select value={editForm.side} onChange={e => setEditForm({ ...editForm, side: e.target.value })}>
+                  <option value="LONG">LONG</option>
+                  <option value="SHORT">SHORT</option>
+                </select>
+              </div>
+              <div className="field">
+                <label>AMOUNT ($)</label>
+                <input type="number" step="0.01" value={editForm.amount} onChange={e => setEditForm({ ...editForm, amount: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>LEVERAGE</label>
+                <input type="number" step="0.1" min="1" value={editForm.leverage} onChange={e => setEditForm({ ...editForm, leverage: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>ENTRY PRICE</label>
+                <input type="number" step="any" value={editForm.entryPrice} onChange={e => setEditForm({ ...editForm, entryPrice: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>ENTRY DATE</label>
+                <input type="date" value={editForm.entryDate} onChange={e => setEditForm({ ...editForm, entryDate: e.target.value })} />
+              </div>
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>NOTES</label>
+              <input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} placeholder="optional" />
+            </div>
+
+            {editModal.status === 'CLOSED' && (
+              <>
+                <div className="form-grid" style={{ marginTop: 8 }}>
+                  <div className="field">
+                    <label>EXIT PRICE</label>
+                    <input type="number" step="any" value={editForm.exitPrice} onChange={e => setEditForm({ ...editForm, exitPrice: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>EXIT DATE</label>
+                    <input type="date" value={editForm.exitDate} onChange={e => setEditForm({ ...editForm, exitDate: e.target.value })} />
+                  </div>
+                  <div className="field">
+                    <label>FEES ($)</label>
+                    <input type="number" step="0.01" min="0" value={editForm.fees} onChange={e => setEditForm({ ...editForm, fees: e.target.value })} />
+                  </div>
+                </div>
+                {(() => {
+                  const amt = Number(editForm.amount), lev = Number(editForm.leverage) || 1
+                  const entry = Number(editForm.entryPrice), exit = Number(editForm.exitPrice)
+                  if (!entry || isNaN(exit)) return null
+                  const pctMove = (exit - entry) / entry
+                  const previewPnl = amt * lev * pctMove - (Number(editForm.fees) || 0)
+                  return (
+                    <p style={{ fontSize: 11, color: previewPnl >= 0 ? '#3DDC84' : '#E8574A', fontFamily: 'var(--mono)', marginTop: 6 }}>
+                      P&L {previewPnl >= 0 ? '+' : ''}${fmt(previewPnl)}
+                    </p>
+                  )
+                })()}
+              </>
+            )}
+
+            <button className="btn-primary" style={{ width: '100%', marginTop: 16 }} type="submit">SAVE CHANGES</button>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
 
-function TradeGroup({ title, trades, onClose, onReopen, onDelete, closed }) {
+function TradeGroup({ title, trades, onClose, onReopen, onDelete, onEdit, closed }) {
   return (
     <div className="group">
       <p className="group-title">{title} ({trades.length})</p>
@@ -1035,6 +1147,7 @@ function TradeGroup({ title, trades, onClose, onReopen, onDelete, closed }) {
                   ) : (
                     <button className="btn-ghost-amber" onClick={() => onClose(t.id)}>CLOSE</button>
                   )}
+                  <button className="btn-ghost-muted" onClick={() => onEdit(t)}>EDIT</button>
                   <button className="icon-btn" onClick={() => onDelete(t.id)}><Trash2 size={13} color="#6B7280" /></button>
                 </span>
               </div>
